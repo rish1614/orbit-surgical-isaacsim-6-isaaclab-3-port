@@ -19,7 +19,7 @@ It uses the `warp` library to run the state machine in parallel on the GPU.
 
 import argparse
 
-from omni.isaac.lab.app import AppLauncher
+from isaaclab.app import AppLauncher
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Reach state machine for psm platform environments.")
@@ -33,7 +33,7 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
 # launch omniverse app
-app_launcher = AppLauncher(headless=args_cli.headless)
+app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 """Rest everything else."""
@@ -44,11 +44,11 @@ from collections.abc import Sequence
 
 import warp as wp
 
-from omni.isaac.lab.assets import RigidObject
+from isaaclab.assets import RigidObject
 
-from omni.isaac.lab_tasks.utils.parse_cfg import parse_env_cfg
+from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
 
-from omni.isaac.lab.utils.math import subtract_frame_transforms
+from isaaclab.utils.math import subtract_frame_transforms
 
 import orbit.surgical.tasks  # noqa: F401
 from orbit.surgical.tasks.surgical.reach.reach_env_cfg import ReachEnvCfg
@@ -150,11 +150,8 @@ class ReachSm:
 
     def compute(self, ee_pose: torch.Tensor, des_final_pose: torch.Tensor):
         """Compute the desired state of the robot's end-effector."""
-        # convert all transformations from (w, x, y, z) to (x, y, z, w)
-        ee_pose = ee_pose[:, [0, 1, 2, 4, 5, 6, 3]]
-        des_final_pose = des_final_pose[:, [0, 1, 2, 4, 5, 6, 3]]
-
-        # convert to warp
+        # Isaac Lab 3.0 already uses (x, y, z, qx, qy, qz, qw).
+        # Pass the pose tensors directly to Warp.
         ee_pose_wp = wp.from_torch(ee_pose.contiguous(), wp.transform)
         des_final_pose_wp = wp.from_torch(des_final_pose.contiguous(), wp.transform)
 
@@ -173,10 +170,8 @@ class ReachSm:
             device=self.device,
         )
 
-        # convert transformations back to (w, x, y, z)
-        des_ee_pose = self.des_ee_pose[:, [0, 1, 2, 6, 3, 4, 5]]
-        # convert to torch
-        return des_ee_pose
+        # Isaac Lab 3.0 uses XYZW directly.
+        return self.des_ee_pose
 
 
 def main():
@@ -191,8 +186,6 @@ def main():
     env = gym.make("Isaac-Reach-PSM-IK-Abs-v0", cfg=env_cfg)
     # reset environment at start
     env.reset()
-    env.sim.step()
-
     # create action buffers (position + quaternion)
     actions = torch.zeros(env.unwrapped.action_space.shape, device=env.unwrapped.device)
     actions[:, 3] = 1.0
@@ -207,14 +200,14 @@ def main():
             dones = env.step(actions)[-2]
 
             # observations
-            robot: RigidObject = env.scene["robot"]
+            robot: RigidObject = env.unwrapped.scene["robot"]
             # -- end-effector frame
             ee_frame_sensor = env.unwrapped.scene["ee_frame"]
-            tcp_rest_position = ee_frame_sensor.data.target_pos_w[..., 0, :].clone() - env.unwrapped.scene.env_origins
+            tcp_rest_position = ee_frame_sensor.data.target_pos_w.torch[..., 0, :].clone() - env.unwrapped.scene.env_origins
             tcp_rest_position_b, _ = subtract_frame_transforms(
-                robot.data.root_state_w[:, :3], robot.data.root_state_w[:, 3:7], tcp_rest_position
+                robot.data.root_link_pose_w.torch[:, :3], robot.data.root_link_pose_w.torch[:, 3:7], tcp_rest_position
             )
-            tcp_rest_orientation = ee_frame_sensor.data.target_quat_w[..., 0, :].clone()
+            tcp_rest_orientation = ee_frame_sensor.data.target_quat_w.torch[..., 0, :].clone()
             # -- target end-effector frame
             desired_pose = env.unwrapped.command_manager.get_command("ee_pose")
 

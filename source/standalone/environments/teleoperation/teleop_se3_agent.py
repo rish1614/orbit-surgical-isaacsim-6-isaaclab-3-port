@@ -9,7 +9,7 @@
 
 import argparse
 
-from omni.isaac.lab.app import AppLauncher
+from isaaclab.app import AppLauncher
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Keyboard teleoperation for Isaac Lab environments.")
@@ -26,7 +26,7 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
 # launch omniverse app
-app_launcher = AppLauncher(headless=args_cli.headless)
+app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 """Rest everything follows."""
@@ -37,9 +37,9 @@ import torch
 
 import carb
 
-from omni.isaac.lab.devices import Se3Gamepad, Se3Keyboard, Se3SpaceMouse
-import omni.isaac.lab_tasks  # noqa: F401
-from omni.isaac.lab_tasks.utils import parse_env_cfg
+from isaaclab.devices import Se3Gamepad, Se3GamepadCfg, Se3Keyboard, Se3KeyboardCfg, Se3SpaceMouse, Se3SpaceMouseCfg
+import isaaclab_tasks  # noqa: F401
+from isaaclab_tasks.utils import parse_env_cfg
 
 from orbit.surgical.ext.devices import Se3KeyboardDualArm
 import orbit.surgical.tasks  # noqa: F401
@@ -74,14 +74,11 @@ def process_actions(teleop_interface, env, is_dual) -> torch.Tensor:
         actions_1 = pre_process_actions(delta_pose_1, gripper_command_1)
         actions = torch.concat([actions_0, actions_1], dim=1)
     else:
-        # get keyboard command
-        delta_pose, gripper_command = teleop_interface.advance()
-        delta_pose = delta_pose.astype("float32")
-        # convert to torch
-        delta_pose = torch.tensor(delta_pose, device=env.unwrapped.device).repeat(env.unwrapped.num_envs, 1)
-        # pre-process actions
-        actions = pre_process_actions(delta_pose, gripper_command)
-    return actions
+        # Current Isaac Lab 3.x devices return the complete action tensor directly.
+        action = teleop_interface.advance()
+        if action.ndim == 1:
+            action = action.repeat(env.unwrapped.num_envs, 1)
+        return action
 
 
 def main():
@@ -104,7 +101,12 @@ def main():
     # create controller
     if args_cli.teleop_device.lower() == "keyboard" and "Dual" not in args_cli.task:
         teleop_interface = Se3Keyboard(
-            pos_sensitivity=0.005 * args_cli.sensitivity, rot_sensitivity=0.05 * args_cli.sensitivity
+            Se3KeyboardCfg(
+                pos_sensitivity=0.005 * args_cli.sensitivity,
+                rot_sensitivity=0.05 * args_cli.sensitivity,
+                gripper_term="Reach" not in args_cli.task,
+                sim_device=args_cli.device,
+            )
         )
     elif args_cli.teleop_device.lower() == "keyboard" and "Dual" in args_cli.task:
         teleop_interface = Se3KeyboardDualArm(

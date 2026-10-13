@@ -19,7 +19,7 @@ It uses the `warp` library to run the state machine in parallel on the GPU.
 
 import argparse
 
-from omni.isaac.lab.app import AppLauncher
+from isaaclab.app import AppLauncher
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Pick and lift state machine for lift environments.")
@@ -33,7 +33,7 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
 # launch omniverse app
-app_launcher = AppLauncher(headless=args_cli.headless)
+app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 """Rest everything else."""
@@ -44,12 +44,12 @@ from collections.abc import Sequence
 
 import warp as wp
 
-from omni.isaac.lab.assets import RigidObject
-from omni.isaac.lab.assets.rigid_object.rigid_object_data import RigidObjectData
+from isaaclab.assets import RigidObject
+from isaaclab.assets.rigid_object.rigid_object_data import RigidObjectData
 
-from omni.isaac.lab_tasks.utils.parse_cfg import parse_env_cfg
+from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
 
-from omni.isaac.lab.utils.math import subtract_frame_transforms
+from isaaclab.utils.math import subtract_frame_transforms
 
 import orbit.surgical.tasks  # noqa: F401
 from orbit.surgical.tasks.surgical.lift.lift_env_cfg import LiftEnvCfg
@@ -207,12 +207,8 @@ class PickAndLiftSm:
 
     def compute(self, ee_pose: torch.Tensor, object_pose: torch.Tensor, des_object_pose: torch.Tensor):
         """Compute the desired state of the robot's end-effector and the gripper."""
-        # convert all transformations from (w, x, y, z) to (x, y, z, w)
-        ee_pose = ee_pose[:, [0, 1, 2, 4, 5, 6, 3]]
-        object_pose = object_pose[:, [0, 1, 2, 4, 5, 6, 3]]
-        des_object_pose = des_object_pose[:, [0, 1, 2, 4, 5, 6, 3]]
-
-        # convert to warp
+        # Isaac Lab 3.0 pose convention is already (x, y, z, qx, qy, qz, qw).
+        # Convert the PyTorch tensors directly to Warp.
         ee_pose_wp = wp.from_torch(ee_pose.contiguous(), wp.transform)
         object_pose_wp = wp.from_torch(object_pose.contiguous(), wp.transform)
         des_object_pose_wp = wp.from_torch(des_object_pose.contiguous(), wp.transform)
@@ -235,10 +231,8 @@ class PickAndLiftSm:
             device=self.device,
         )
 
-        # convert transformations back to (w, x, y, z)
-        des_ee_pose = self.des_ee_pose[:, [0, 1, 2, 6, 3, 4, 5]]
-        # convert to torch
-        return torch.cat([des_ee_pose, self.des_gripper_state.unsqueeze(-1)], dim=-1)
+        # Pose is already in Isaac Lab 3.0 XYZW convention.
+        return torch.cat([self.des_ee_pose, self.des_gripper_state.unsqueeze(-1)], dim=-1)
 
 
 def main():
@@ -249,15 +243,21 @@ def main():
         num_envs=args_cli.num_envs,
         use_fabric=not args_cli.disable_fabric,
     )
+    # Allow enough time for the scripted grasp-and-lift sequence.
+    env_cfg.episode_length_s = 6.0
+
+    # Keep the lift target fixed throughout this demo episode.
+    env_cfg.commands.object_pose.resampling_time_range = (10.0, 10.0)
     # create environment
     env = gym.make("Isaac-Lift-Block-PSM-IK-Abs-v0", cfg=env_cfg)
     # reset environment at start
     env.reset()
-    env.sim.step()
+
+    env.unwrapped.sim.step()
 
     # create action buffers (position + quaternion)
     actions = torch.zeros(env.unwrapped.action_space.shape, device=env.unwrapped.device)
-    actions[:, 3] = 1.0
+    actions[:, 6] = 1.0
 
     # create state machine
     pick_sm = PickAndLiftSm(env_cfg.sim.dt * env_cfg.decimation, env.unwrapped.num_envs, env.unwrapped.device)
@@ -266,24 +266,26 @@ def main():
         # run everything in inference mode
         with torch.inference_mode():
             # step environment
-            dones = env.step(actions)[-2]
-
+            step_result = env.step(actions)
+            terminated = step_result[2]
+            truncated = step_result[3]
+            dones = terminated | truncated
             # observations
-            robot: RigidObject = env.scene["robot"]
+            robot: RigidObject = env.unwrapped.scene["robot"]
             # -- end-effector frame
             ee_frame_sensor = env.unwrapped.scene["ee_frame"]
-            tcp_rest_position = ee_frame_sensor.data.target_pos_w[..., 0, :].clone() - env.unwrapped.scene.env_origins
+            tcp_rest_position = ee_frame_sensor.data.target_pos_w.torch[..., 0, :].clone() - env.unwrapped.scene.env_origins
             tcp_rest_position_b, _ = subtract_frame_transforms(
-                robot.data.root_state_w[:, :3], robot.data.root_state_w[:, 3:7], tcp_rest_position
+                robot.data.root_link_pose_w.torch[:, :3], robot.data.root_link_pose_w.torch[:, 3:7], tcp_rest_position
             )
-            tcp_rest_orientation = ee_frame_sensor.data.target_quat_w[..., 0, :].clone()
+            tcp_rest_orientation = ee_frame_sensor.data.target_quat_w.torch[..., 0, :].clone()
             # -- object frame
             object_data: RigidObjectData = env.unwrapped.scene["object"].data
-            object_position = object_data.root_pos_w - env.unwrapped.scene.env_origins
+            object_position = object_data.root_pos_w.torch - env.unwrapped.scene.env_origins
             object_position_b, _ = subtract_frame_transforms(
-                robot.data.root_state_w[:, :3], robot.data.root_state_w[:, 3:7], object_position
+                robot.data.root_link_pose_w.torch[:, :3], robot.data.root_link_pose_w.torch[:, 3:7], object_position
             )
-            object_orientation = object_data.root_quat_w
+            object_orientation = object_data.root_quat_w.torch
             # -- target object frame
             desired_pose = env.unwrapped.command_manager.get_command("object_pose")
 

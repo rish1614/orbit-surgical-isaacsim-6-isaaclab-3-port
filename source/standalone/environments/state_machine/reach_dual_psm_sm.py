@@ -1,4 +1,7 @@
 # Copyright (c) 2024, The ORBIT-Surgical Project Developers.
+
+
+
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -19,7 +22,7 @@ It uses the `warp` library to run the state machine in parallel on the GPU.
 
 import argparse
 
-from omni.isaac.lab.app import AppLauncher
+from isaaclab.app import AppLauncher
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Reach state machine for psm platform environments.")
@@ -33,7 +36,7 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
 # launch omniverse app
-app_launcher = AppLauncher(headless=args_cli.headless)
+app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 """Rest everything else."""
@@ -44,11 +47,11 @@ from collections.abc import Sequence
 
 import warp as wp
 
-from omni.isaac.lab.assets import RigidObject
+from isaaclab.assets import RigidObject
 
-from omni.isaac.lab_tasks.utils.parse_cfg import parse_env_cfg
+from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
 
-from omni.isaac.lab.utils.math import subtract_frame_transforms
+from isaaclab.utils.math import subtract_frame_transforms
 
 import orbit.surgical.tasks  # noqa: F401
 from orbit.surgical.tasks.surgical.reach_dual.reach_env_cfg import ReachEnvCfg
@@ -162,12 +165,12 @@ class ReachSm:
             des_final_pose_1: torch.Tensor,
             des_final_pose_2: torch.Tensor
     ):
-        """Compute the desired state of the robot's end-effector."""
-        # convert all transformations from (w, x, y, z) to (x, y, z, w)
-        ee_1_pose = ee_1_pose[:, [0, 1, 2, 4, 5, 6, 3]]
-        ee_2_pose = ee_2_pose[:, [0, 1, 2, 4, 5, 6, 3]]
-        des_final_pose_1 = des_final_pose_1[:, [0, 1, 2, 4, 5, 6, 3]]
-        des_final_pose_2 = des_final_pose_2[:, [0, 1, 2, 4, 5, 6, 3]]
+        # """Compute the desired state of the robot's end-effector."""
+        # # convert all transformations from (w, x, y, z) to (x, y, z, w)
+        # ee_1_pose = ee_1_pose[:, [0, 1, 2, 4, 5, 6, 3]]
+        # ee_2_pose = ee_2_pose[:, [0, 1, 2, 4, 5, 6, 3]]
+        # des_final_pose_1 = des_final_pose_1[:, [0, 1, 2, 4, 5, 6, 3]]
+        # des_final_pose_2 = des_final_pose_2[:, [0, 1, 2, 4, 5, 6, 3]]
 
         # convert to warp
         ee_1_pose_wp = wp.from_torch(ee_1_pose.contiguous(), wp.transform)
@@ -193,11 +196,11 @@ class ReachSm:
             device=self.device,
         )
 
-        # convert transformations back to (w, x, y, z)
-        des_ee_1_pose = self.des_ee_1_pose[:, [0, 1, 2, 6, 3, 4, 5]]
-        des_ee_2_pose = self.des_ee_2_pose[:, [0, 1, 2, 6, 3, 4, 5]]
+        # # convert transformations back to (w, x, y, z)
+        # des_ee_1_pose = self.des_ee_1_pose[:, [0, 1, 2, 6, 3, 4, 5]]
+        # des_ee_2_pose = self.des_ee_2_pose[:, [0, 1, 2, 6, 3, 4, 5]]
         # convert to torch
-        return torch.cat([des_ee_1_pose, des_ee_2_pose], dim=-1)
+        return torch.cat([self.des_ee_1_pose, self.des_ee_2_pose], dim=-1)
 
 
 def main():
@@ -208,15 +211,21 @@ def main():
         num_envs=args_cli.num_envs,
         use_fabric=not args_cli.disable_fabric,
     )
+    # Allow enough time for the scripted grasp-and-lift sequence.
+    env_cfg.episode_length_s = 6.0
+
+    # Keep the lift target fixed throughout this demo episode.
+    # env_cfg.commands.object_pose.resampling_time_range = (10.0, 10.0)
     # create environment
     env = gym.make("Isaac-Reach-Dual-PSM-IK-Abs-v0", cfg=env_cfg)
     # reset environment at start
     env.reset()
-    env.sim.step()
+    env.unwrapped.sim.step()
 
     # create action buffers (position + quaternion)
     actions = torch.zeros(env.unwrapped.action_space.shape, device=env.unwrapped.device)
-    actions[:, 3] = 1.0
+    actions[:, 6] = 1.0
+    actions[:, 13] = 1.0
 
     # create state machine
     reach_sm = ReachSm(env_cfg.sim.dt * env_cfg.decimation, env.unwrapped.num_envs, env.unwrapped.device)
@@ -225,11 +234,13 @@ def main():
         # run everything in inference mode
         with torch.inference_mode():
             # step environment
-            dones = env.step(actions)[-2]
-
+            step_result = env.step(actions)
+            terminated = step_result[2]
+            truncated = step_result[3]
+            dones = terminated | truncated
             # observations
-            robot_1: RigidObject = env.scene["robot_1"]
-            robot_2: RigidObject = env.scene["robot_2"]
+            robot_1: RigidObject = env.unwrapped.scene["robot_1"]
+            robot_2: RigidObject = env.unwrapped.scene["robot_2"]
             # -- end-effector frame
             ee_1_frame_sensor = env.unwrapped.scene["ee_1_frame"]
             tcp_1_rest_position = ee_1_frame_sensor.data.target_pos_w[..., 0, :].clone() - env.unwrapped.scene.env_origins
@@ -246,7 +257,8 @@ def main():
             # -- target end-effector frame
             desired_pose_1 = env.unwrapped.command_manager.get_command("ee_1_pose")
             desired_pose_2 = env.unwrapped.command_manager.get_command("ee_2_pose")
-
+            if dones.any():
+                reach_sm.reset_idx(dones.nonzero(as_tuple=False).squeeze(-1))
             # advance state machine
             actions = reach_sm.compute(
                 torch.cat([tcp_1_rest_position_b, tcp_1_rest_orientation], dim=-1),
