@@ -232,3 +232,42 @@ If you use this framework in your work, please cite [this paper](https://arxiv.o
   year={2024}
 }
 ```
+
+---
+
+# Isaac Sim 6.1 / Isaac Lab 3.0 Compatibility Port
+
+This fork documents a community porting effort for running ORBIT-Surgical
+with a newer NVIDIA Isaac simulation stack.
+
+## Development Environment
+
+- Ubuntu 24.04.5 LTS
+- NVIDIA RTX 5070 Ti Laptop GPU
+- Isaac Sim 6.1.0
+- Isaac Lab 3.0.0-EA
+- Python 3.12
+
+## Project Goals
+
+- Document API and namespace changes for newer Isaac Lab versions.
+- Preserve original task and state-machine logic where possible.
+- Provide reproducible launch commands and troubleshooting notes.
+- Record which tasks have been tested and which remain unverified.
+
+## Documentation
+
+- [Migration Notes](docs/ISAACLAB_3_MIGRATION.md)
+- [Tested Tasks](docs/TESTED_TASKS.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+
+## Validation Disclaimer
+
+Environment startup and visible robot movement do not automatically prove
+task success or exact reproduction of published paper results.
+Validation status is recorded separately for each task.
+
+This is an independent community compatibility effort and is not an official
+release of ORBIT-Surgical.
+
+Original project: https://github.com/orbit-surgical/orbit-surgical
