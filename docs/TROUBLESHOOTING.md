@@ -18,10 +18,11 @@ git remote -v
 
 ## 2. Environment Does Not Launch
 
-Start with one environment:
+Start with one environment from the repository root:
 
 ```bash
---num_envs 1
+"$ISAACLAB_PATH/isaaclab.sh" -p source/standalone/environments/state_machine/lift_block_sm.py --num_envs 1
+"$ISAACLAB_PATH/isaaclab.sh" -p source/standalone/environments/state_machine/lift_block_sm.py --headless --num_envs 1
 ```
 
 Review the first fatal error in the terminal log. Warnings about deprecated APIs do not necessarily mean that the application has failed.

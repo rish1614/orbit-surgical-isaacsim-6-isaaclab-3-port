@@ -10,6 +10,10 @@
 [![Linux platform](https://img.shields.io/badge/platform-linux--64-orange.svg)](https://releases.ubuntu.com/20.04/)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://pre-commit.com/)
 
+
+
+**Compatibility-port note:** This branch documents a community port targeting Isaac Sim 6.1.0, Isaac Lab 3.0.0-EA, and Python 3.12. The original setup instructions below are inherited from upstream and have not been fully rewritten for this newer stack. See [the migration notes](docs/ISAACLAB_3_MIGRATION.md) and [tested-task status](docs/TESTED_TASKS.md) for current compatibility information.
+
 ## Overview
 
 ORBIT-Surgical is a physics-based surgical robot simulation framework with photorealistic rendering in NVIDIA Omniverse. ORBIT-Surgical leverages GPU parallelization to train reinforcement learning and imitation learning algorithms to facilitate study of robot learning to augment human surgical skills. ORBIT-Surgical is built upon [NVIDIA Isaac Sim](https://docs.omniverse.nvidia.com/isaacsim/latest/overview.html) to leverage the latest simulation capabilities for photo-realistic scenes and fast and accurate simulation.
